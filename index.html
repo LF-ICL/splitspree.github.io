@@ -1,236 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SplitSpree</title>
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/components.css" />
+</head>
+<body>
 
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: var(--font-sans); color: var(--color-text-primary); }
-.app { max-width: 480px; margin: 0 auto; padding: 1rem; }
-.header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 0.5px solid var(--color-border-tertiary); }
-.logo { font-size: 20px; font-weight: 500; }
-.logo span { color: #1D9E75; }
-.btn { background: transparent; border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 8px 14px; font-size: 13px; cursor: pointer; color: var(--color-text-primary); }
-.btn:hover { background: var(--color-background-secondary); }
-.btn-primary { background: #1D9E75; color: white; border-color: #1D9E75; }
-.btn-primary:hover { background: #0F6E56; }
-.btn-danger { color: #D85A30; border-color: #D85A30; }
-.section-title { font-size: 13px; font-weight: 500; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
-.group-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 1rem 1.25rem; margin-bottom: 10px; cursor: pointer; }
-.group-card:hover { border-color: var(--color-border-secondary); }
-.group-header { display: flex; justify-content: space-between; align-items: flex-start; }
-.group-name { font-size: 16px; font-weight: 500; }
-.group-meta { font-size: 13px; color: var(--color-text-secondary); margin-top: 4px; }
-.balance-pill { font-size: 12px; padding: 3px 10px; border-radius: 99px; font-weight: 500; }
-.owe { background: #FAECE7; color: #993C1D; }
-.owed { background: #E1F5EE; color: #0F6E56; }
-.settled { background: var(--color-background-secondary); color: var(--color-text-secondary); }
-.modal-bg { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.modal { background: var(--color-background-primary); border-radius: var(--border-radius-lg); padding: 1.5rem; width: 90%; max-width: 400px; border: 0.5px solid var(--color-border-tertiary); }
-.modal h2 { font-size: 18px; font-weight: 500; margin-bottom: 1rem; }
-.form-group { margin-bottom: 12px; }
-.form-group label { font-size: 13px; color: var(--color-text-secondary); display: block; margin-bottom: 6px; }
-.form-group input, .form-group select { width: 100%; }
-.tag-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-.tag { background: var(--color-background-secondary); border: 0.5px solid var(--color-border-tertiary); border-radius: 99px; padding: 3px 10px; font-size: 12px; display: flex; align-items: center; gap: 6px; }
-.tag button { background: none; border: none; cursor: pointer; font-size: 14px; color: var(--color-text-secondary); padding: 0; line-height: 1; }
-.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1.5rem; }
-.detail-header { display: flex; align-items: center; gap: 10px; margin-bottom: 1.5rem; }
-.back-btn { background: none; border: none; cursor: pointer; font-size: 20px; color: var(--color-text-secondary); padding: 0; }
-.members-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 1.5rem; }
-.member-chip { background: var(--color-background-secondary); border-radius: 99px; padding: 4px 12px; font-size: 13px; }
-.balance-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary); font-size: 14px; }
-.expense-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 0.5px solid var(--color-border-tertiary); }
-.expense-info .expense-desc { font-size: 14px; font-weight: 500; }
-.expense-info .expense-meta { font-size: 12px; color: var(--color-text-secondary); margin-top: 2px; }
-.expense-amount { font-size: 14px; font-weight: 500; }
-.empty { text-align: center; padding: 2rem 0; color: var(--color-text-secondary); font-size: 14px; }
-.fab { position: fixed; bottom: 1.5rem; right: 1.5rem; width: 52px; height: 52px; border-radius: 50%; background: #1D9E75; color: white; border: none; font-size: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-</style>
+  <!-- ── Home view: group list ─────────────────────────────── -->
+  <div id="view-home" class="view active">
+    <header class="app-header">
+      <h1 class="app-title">SplitSpree</h1>
+      <p class="app-tagline">Splitwise but free so you go on a spree</p>
+    </header>
 
-<div class="app" id="app"></div>
-
-<script>
-const state = {
-  view: 'home',
-  groups: JSON.parse(localStorage.getItem('sg') || '[]'),
-  activeGroup: null,
-  modal: null,
-  newGroup: { name: '', members: [], memberInput: '' },
-  newExpense: { desc: '', amount: '', paidBy: '' }
-};
-
-function save() { localStorage.setItem('sg', JSON.stringify(state.groups)); }
-
-function getBalances(group) {
-  const bal = {};
-  group.members.forEach(m => bal[m] = 0);
-  group.expenses.forEach(e => {
-    const share = e.amount / group.members.length;
-    group.members.forEach(m => {
-      if (m === e.paidBy) bal[m] += e.amount - share;
-      else bal[m] -= share;
-    });
-  });
-  return bal;
-}
-
-function groupSummary(group) {
-  const bal = getBalances(group);
-  const you = group.members[0];
-  const myBal = bal[you] || 0;
-  return myBal;
-}
-
-function render() {
-  const app = document.getElementById('app');
-  if (state.view === 'home') renderHome(app);
-  else renderDetail(app);
-  if (state.modal) renderModal();
-}
-
-function renderHome(app) {
-  const groups = state.groups;
-  app.innerHTML = `
-    <div class="header">
-      <div class="logo">Split<span>Spree</span></div>
-      <button class="btn btn-primary" onclick="openNewGroup()">+ New group</button>
-    </div>
-    <div class="section-title">Your groups</div>
-    ${groups.length === 0 ? '<div class="empty">No groups yet — create one to get started</div>' : ''}
-    ${groups.map((g, i) => {
-      const bal = groupSummary(g);
-      let pillClass = 'settled', pillText = 'Settled up';
-      if (bal > 0) { pillClass = 'owed'; pillText = `You are owed ¥${bal.toFixed(0)}`; }
-      if (bal < 0) { pillClass = 'owe'; pillText = `You owe ¥${Math.abs(bal).toFixed(0)}`; }
-      return `<div class="group-card" onclick="openGroup(${i})">
-        <div class="group-header">
-          <div>
-            <div class="group-name">${g.name}</div>
-            <div class="group-meta">${g.members.length} members · ${g.expenses.length} expenses</div>
-          </div>
-          <span class="balance-pill ${pillClass}">${pillText}</span>
-        </div>
-      </div>`;
-    }).join('')}
-  `;
-}
-
-function renderDetail(app) {
-  const g = state.groups[state.activeGroup];
-  const bals = getBalances(g);
-  app.innerHTML = `
-    <div class="detail-header">
-      <button class="back-btn" onclick="goHome()">←</button>
-      <h2 style="font-size:20px;font-weight:500;">${g.name}</h2>
-    </div>
-    <div class="section-title">Members</div>
-    <div class="members-row">${g.members.map(m => `<span class="member-chip">${m}</span>`).join('')}</div>
-    <div class="section-title">Balances</div>
-    ${Object.entries(bals).map(([m, b]) => `
-      <div class="balance-row">
-        <span>${m}</span>
-        <span style="font-weight:500;color:${b >= 0 ? '#0F6E56' : '#993C1D'}">${b >= 0 ? '+' : ''}¥${b.toFixed(0)}</span>
-      </div>`).join('')}
-    <div style="margin-top:1.5rem;display:flex;justify-content:space-between;align-items:center;">
-      <div class="section-title" style="margin:0">Expenses</div>
-      <button class="btn btn-primary" onclick="openNewExpense()" style="font-size:12px;padding:6px 12px">+ Add expense</button>
-    </div>
-    <div style="margin-top:12px;">
-    ${g.expenses.length === 0 ? '<div class="empty">No expenses yet</div>' : ''}
-    ${g.expenses.map(e => `
-      <div class="expense-row">
-        <div class="expense-info">
-          <div class="expense-desc">${e.desc}</div>
-          <div class="expense-meta">Paid by ${e.paidBy}</div>
-        </div>
-        <div class="expense-amount">¥${e.amount.toFixed(0)}</div>
-      </div>`).join('')}
-    </div>
-  `;
-}
-
-function renderModal() {
-  let existing = document.getElementById('modal-layer');
-  if (existing) existing.remove();
-  const div = document.createElement('div');
-  div.id = 'modal-layer';
-  div.className = 'modal-bg';
-  div.onclick = (e) => { if (e.target === div) closeModal(); };
-
-  if (state.modal === 'newGroup') {
-    div.innerHTML = `<div class="modal">
-      <h2>New group</h2>
-      <div class="form-group">
-        <label>Group name</label>
-        <input type="text" id="gname" placeholder="e.g. Tokyo trip" value="${state.newGroup.name}" oninput="state.newGroup.name=this.value">
+    <section class="section">
+      <h2>Create a Group</h2>
+      <div class="form-row">
+        <input id="new-group-name"    type="text" placeholder="Group name (e.g. Tokyo trip)" />
+        <input id="new-group-members" type="text" placeholder="Members, comma-separated (e.g. Alice, Bob, Charlie)" />
+        <button id="create-group-btn" class="btn btn--primary">Create Group</button>
       </div>
-      <div class="form-group">
-        <label>Add members</label>
-        <div style="display:flex;gap:8px;">
-          <input type="text" id="minput" placeholder="Name" style="flex:1" value="${state.newGroup.memberInput}"
-            oninput="state.newGroup.memberInput=this.value"
-            onkeydown="if(event.key==='Enter')addMember()">
-          <button class="btn" onclick="addMember()">Add</button>
-        </div>
-        <div class="tag-row" id="member-tags">
-          ${state.newGroup.members.map((m,i) => `<span class="tag">${m}<button onclick="removeMember(${i})">×</button></span>`).join('')}
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button class="btn" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="createGroup()">Create group</button>
-      </div>
-    </div>`;
-  }
+    </section>
 
-  if (state.modal === 'newExpense') {
-    const g = state.groups[state.activeGroup];
-    div.innerHTML = `<div class="modal">
-      <h2>Add expense</h2>
-      <div class="form-group">
-        <label>Description</label>
-        <input type="text" id="edesc" placeholder="e.g. Dinner" value="${state.newExpense.desc}" oninput="state.newExpense.desc=this.value">
-      </div>
-      <div class="form-group">
-        <label>Amount (¥)</label>
-        <input type="number" id="eamt" placeholder="0" value="${state.newExpense.amount}" oninput="state.newExpense.amount=this.value">
-      </div>
-      <div class="form-group">
-        <label>Paid by</label>
-        <select id="epaid" onchange="state.newExpense.paidBy=this.value">
-          <option value="">Select member</option>
-          ${g.members.map(m => `<option value="${m}" ${state.newExpense.paidBy===m?'selected':''}>${m}</option>`).join('')}
-        </select>
-      </div>
-      <div style="font-size:12px;color:var(--color-text-secondary);margin-top:8px;">Split equally among all ${g.members.length} members</div>
-      <div class="modal-actions">
-        <button class="btn" onclick="closeModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="addExpense()">Add expense</button>
-      </div>
-    </div>`;
-  }
+    <section class="section">
+      <h2>Your Groups</h2>
+      <div id="group-list"><!-- filled by renderGroupList() --></div>
+    </section>
+  </div>
 
-  document.body.appendChild(div);
-}
+  <!-- ── Group detail view ─────────────────────────────────── -->
+  <div id="view-group" class="view">
+    <header class="app-header">
+      <button id="back-btn" class="btn btn--ghost">← Back</button>
+      <h1 id="group-title" class="app-title"></h1>
+    </header>
 
-function openNewGroup() { state.modal = 'newGroup'; state.newGroup = { name: '', members: [], memberInput: '' }; renderModal(); }
-function closeModal() { state.modal = null; let m = document.getElementById('modal-layer'); if(m) m.remove(); }
-function addMember() {
-  const val = state.newGroup.memberInput.trim();
-  if (val) { state.newGroup.members.push(val); state.newGroup.memberInput = ''; renderModal(); setTimeout(()=>document.getElementById('minput')?.focus(),50); }
-}
-function removeMember(i) { state.newGroup.members.splice(i,1); renderModal(); }
-function createGroup() {
-  if (!state.newGroup.name || state.newGroup.members.length < 2) return alert('Add a name and at least 2 members');
-  state.groups.push({ name: state.newGroup.name, members: state.newGroup.members, expenses: [] });
-  save(); closeModal(); render();
-}
-function openGroup(i) { state.activeGroup = i; state.view = 'detail'; render(); }
-function goHome() { state.view = 'home'; state.activeGroup = null; render(); }
-function openNewExpense() { state.modal = 'newExpense'; state.newExpense = { desc: '', amount: '', paidBy: '' }; renderModal(); }
-function addExpense() {
-  const { desc, amount, paidBy } = state.newExpense;
-  if (!desc || !amount || !paidBy) return alert('Please fill all fields');
-  state.groups[state.activeGroup].expenses.push({ desc, amount: parseFloat(amount), paidBy });
-  save(); closeModal(); render();
-}
+    <section class="section">
+      <h2>Members</h2>
+      <div id="member-list"><!-- filled by renderMemberList() --></div>
+    </section>
 
-render();
-</script>
+    <section class="section">
+      <h2>Add Expense</h2>
+      <div class="form-row">
+        <input id="new-expense-desc"    type="text"   placeholder="Description (e.g. Dinner)" />
+        <input id="new-expense-amount"  type="number" placeholder="Amount" min="0" step="any" />
+        <input id="new-expense-paid-by" type="text"   placeholder="Paid by (member name)" />
+        <button id="add-expense-btn" class="btn btn--primary">Add Expense</button>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Expenses</h2>
+      <div id="expense-list"><!-- filled by renderExpenseList() --></div>
+    </section>
+
+    <section class="section">
+      <h2>Balances</h2>
+      <div id="balance-list"><!-- filled by renderBalanceSummary() --></div>
+    </section>
+
+    <section class="section">
+      <h2>Settle Up</h2>
+      <div id="settlement-list"><!-- filled by renderBalanceSummary() --></div>
+    </section>
+  </div>
+
+  <!-- JS — load order matters: each file depends on the one above it -->
+  <script src="js/storage.js"></script>
+  <script src="js/groups.js"></script>
+  <script src="js/expenses.js"></script>
+  <script src="js/balances.js"></script>
+  <script src="js/ui.js"></script>
+
+</body>
+</html>
