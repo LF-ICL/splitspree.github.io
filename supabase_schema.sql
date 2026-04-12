@@ -1,188 +1,147 @@
-# SplitSpree
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SplitSpree</title>
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <!-- Supabase JS SDK (UMD build — exposes global `supabase`) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+</head>
+<body>
 
-> Splitwise but free so you go on a spree
+  <!-- ── Loading overlay (shown on first paint while session loads) ── -->
+  <div id="loading-overlay">
+    <div class="loading-spinner"></div>
+    <p>Loading SplitSpree…</p>
+  </div>
 
-A lightweight expense splitter with user auth and server-side storage.
-Pure HTML, CSS, and vanilla JS frontend. Supabase (PostgreSQL + Auth) backend.
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- VIEW 1: Auth — register / login                           -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div id="view-auth" class="view">
+    <header class="app-header app-header--centered">
+      <h1 class="app-title">SplitSpree</h1>
+      <p class="app-tagline">Splitwise but free so you go on a spree</p>
+    </header>
 
-**Live:** https://splitspree.github.io  
-**Repo:** https://github.com/LF-ICL/splitspree.github.io
+    <div class="auth-card card">
+      <h2 id="auth-title">Create account</h2>
 
----
+      <!-- Register panel -->
+      <div id="auth-register-panel">
+        <div class="form-stack">
+          <input id="reg-username" type="text"  placeholder="Username (e.g. Alice)" autocomplete="username" />
+          <input id="reg-email"    type="email" placeholder="Email address"         autocomplete="email" />
+          <button id="reg-submit-btn" class="btn btn--primary btn--full">Send verification email</button>
+        </div>
+        <p class="auth-switch">Already registered?
+          <a href="#" id="show-login-link">Sign in instead</a>
+        </p>
+      </div>
 
-## First-time setup
+      <!-- Login panel -->
+      <div id="auth-login-panel" class="hidden">
+        <div class="form-stack">
+          <input id="login-email" type="email" placeholder="Email address" autocomplete="email" />
+          <button id="login-submit-btn" class="btn btn--primary btn--full">Send login link</button>
+        </div>
+        <p class="auth-switch">New here?
+          <a href="#" id="show-register-link">Create an account</a>
+        </p>
+      </div>
+    </div>
+  </div>
 
-### 1. Create a Supabase project
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- VIEW 2: Home — group list                                 -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div id="view-home" class="view">
+    <header class="app-header">
+      <h1 class="app-title">SplitSpree</h1>
+      <div class="app-header__user">
+        <span id="home-username" class="username-badge"></span>
+        <button id="logout-btn" class="btn btn--ghost btn--sm">Sign out</button>
+      </div>
+    </header>
 
-1. Go to https://supabase.com and sign up (free)
-2. Click **New project**
-3. Choose a name (e.g. `splitspree`), set a database password, pick a region close to you
-4. Wait ~2 minutes for the project to spin up
+    <!-- Pending dummy-merge notifications -->
+    <div id="merge-notifications"></div>
 
-### 2. Run the database schema
+    <section class="section">
+      <h2>Create a Group</h2>
+      <div class="form-stack form-stack--row">
+        <input id="new-group-name"    type="text" placeholder="Group name (e.g. Tokyo trip)" />
+        <input id="new-group-members" type="text" placeholder="Other members, comma-separated (optional)" />
+        <button id="create-group-btn" class="btn btn--primary">Create</button>
+      </div>
+      <p class="hint">Members you list will be added as guests if they haven't registered yet.</p>
+    </section>
 
-1. In your Supabase dashboard, go to **SQL Editor → New query**
-2. Paste the entire contents of `supabase_schema.sql`
-3. Click **Run** — you should see "Success. No rows returned"
+    <section class="section">
+      <h2>Your Groups</h2>
+      <div id="group-list"></div>
+    </section>
+  </div>
 
-### 3. Configure email redirect URL
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- VIEW 3: Group detail                                      -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div id="view-group" class="view">
+    <header class="app-header">
+      <button id="back-btn" class="btn btn--ghost">← Back</button>
+      <h1 id="group-title" class="app-title"></h1>
+    </header>
 
-1. Go to **Authentication → URL Configuration**
-2. Set **Site URL** to `https://splitspree.github.io`
-3. Under **Redirect URLs**, add `https://splitspree.github.io`
-4. For local dev, also add `http://localhost:5500` (or whatever port you use)
+    <section class="section">
+      <h2>Members</h2>
+      <div id="member-list"></div>
+      <details class="add-dummy-toggle">
+        <summary>Add a guest member</summary>
+        <div class="form-stack form-stack--row" style="margin-top:0.75rem">
+          <input id="new-dummy-name" type="text" placeholder="Guest name (e.g. Bob)" />
+          <button id="add-dummy-btn" class="btn btn--primary btn--sm">Add guest</button>
+        </div>
+        <p class="hint">Guests can be merged with a registered account later.</p>
+      </details>
+    </section>
 
-### 4. Add your Supabase credentials
+    <section class="section">
+      <h2>Add Expense</h2>
+      <div class="form-stack form-stack--row">
+        <input id="new-expense-desc"   type="text"   placeholder="Description (e.g. Dinner)" />
+        <input id="new-expense-amount" type="number" placeholder="Amount" min="0" step="any" />
+        <select id="new-expense-paid-by">
+          <option value="">— Who paid? —</option>
+        </select>
+        <button id="add-expense-btn" class="btn btn--primary">Add</button>
+      </div>
+    </section>
 
-1. Go to **Project Settings → API**
-2. Copy your **Project URL** and **anon/public** key
-3. Open `js/supabase.js` and replace:
-   ```js
-   const SUPABASE_URL      = 'https://YOUR_PROJECT_ID.supabase.co';
-   const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
-   ```
+    <section class="section">
+      <h2>Expenses</h2>
+      <div id="expense-list"></div>
+    </section>
 
-### 5. Deploy
+    <section class="section">
+      <h2>Balances</h2>
+      <div id="balance-list"></div>
+    </section>
 
-```bash
-git add .
-git commit -m "feat: add Supabase auth and server-side storage"
-git push origin main
-```
+    <section class="section">
+      <h2>Settle Up</h2>
+      <div id="settlement-list"></div>
+    </section>
+  </div>
 
----
+  <!-- JS — load order matters -->
+  <script src="js/supabase.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/groups.js"></script>
+  <script src="js/expenses.js"></script>
+  <script src="js/balances.js"></script>
+  <script src="js/ui.js"></script>
 
-## File structure
-
-```
-splitspree.github.io/
-├── index.html              ← markup: auth view, home view, group detail view
-├── supabase_schema.sql     ← run once in Supabase SQL editor to set up DB
-├── css/
-│   ├── main.css            ← global layout, auth, loading overlay
-│   └── components.css      ← buttons, cards, chips, merge banner
-├── js/
-│   ├── supabase.js         ← Supabase client init (set your keys here)
-│   ├── auth.js             ← register, login, logout, session, merge queue
-│   ├── groups.js           ← group + member CRUD via Supabase
-│   ├── expenses.js         ← expense CRUD via Supabase
-│   ├── balances.js         ← pure math: balances + settlements (no network)
-│   └── ui.js               ← all DOM rendering and event wiring
-├── pages/                  ← future additional pages
-├── assets/icons/
-└── README.md
-```
-
----
-
-## JS load order (critical)
-
-```html
-<script src="js/supabase.js"></script>   <!-- Supabase client — no deps -->
-<script src="js/auth.js"></script>       <!-- needs supabase.js -->
-<script src="js/groups.js"></script>     <!-- needs supabase.js, auth.js -->
-<script src="js/expenses.js"></script>   <!-- needs supabase.js, auth.js -->
-<script src="js/balances.js"></script>   <!-- pure math, no deps -->
-<script src="js/ui.js"></script>         <!-- needs everything above -->
-```
-
----
-
-## Database schema
-
-| Table | Purpose |
-|-------|---------|
-| `profiles` | One row per registered user (linked to Supabase auth) |
-| `groups` | Expense groups |
-| `group_members` | Members of each group — real or dummy |
-| `expenses` | Individual expense records |
-| `dummy_merge_queue` | Pending merge proposals when a dummy name registers |
-
-Row-Level Security is enabled on all tables — users can only see and edit data for groups they belong to.
-
----
-
-## Auth flow
-
-**Register:** User enters username + email → receives verification email → clicks link → auto-logged in, profile created.
-
-**Login (new device):** User enters email only → receives magic-link → clicks link → auto-logged in. No password needed.
-
-**Session:** Stored in a cookie (30-day expiry). Works across page reloads and devices.
-
----
-
-## Dummy member merging
-
-When a registered user creates a group and adds members by name, any name that doesn't match a registered account becomes a **guest (dummy) member**.
-
-When a new user registers with a username matching an existing dummy name, the group creator sees a **merge notification** on their home screen. They can accept (linking the real account to that member's history) or dismiss (keeping them separate).
-
----
-
-## Module API reference
-
-### `auth.js`
-| Function | Description |
-|----------|-------------|
-| `registerUser(username, email)` | Sends verification email |
-| `loginUser(email)` | Sends magic-link login email |
-| `logoutUser()` | Signs out |
-| `getCurrentUser()` | Returns `{id, username, email}` or null |
-| `getSession()` | Returns raw Supabase session |
-| `handleAuthRedirect()` | Call on page load to process email link |
-| `getPendingMerges()` | Returns unresolved merge proposals |
-| `acceptMerge(mergeId)` | Links dummy to real profile |
-| `dismissMerge(mergeId)` | Marks proposal dismissed |
-
-### `groups.js`
-| Function | Description |
-|----------|-------------|
-| `listGroups()` | All groups the current user is in |
-| `getGroup(id)` | Single group with members |
-| `createGroup(name, memberNames[])` | Creates group, adds current user + others |
-| `renameGroup(id, name)` | Renames (owner only) |
-| `removeGroup(id)` | Deletes group + all data (owner only) |
-| `addDummyMember(groupId, name)` | Adds a guest member |
-| `removeMember(groupId, memberId)` | Removes member (blocked if has expenses) |
-
-### `expenses.js`
-| Function | Description |
-|----------|-------------|
-| `getExpenses(groupId)` | All expenses for a group |
-| `addExpense(groupId, desc, amount, memberId)` | Creates validated expense |
-| `editExpense(expenseId, updates)` | Patches description/amount/payer |
-| `removeExpense(expenseId)` | Deletes expense (creator only) |
-
-### `balances.js`
-| Function | Description |
-|----------|-------------|
-| `calculateBalances(members, expenses)` | Returns `{name: netBalance}` |
-| `calculateSettlements(balances)` | Returns `[{from, to, amount}]` |
-| `getTotalSpend(expenses)` | Sum of all amounts |
-| `getPaidTotals(members, expenses)` | Returns `{name: totalPaid}` |
-
----
-
-## Branch strategy
-
-| Branch | Purpose |
-|--------|---------|
-| `main` | Live on GitHub Pages — never push directly |
-| `develop` | Integration branch |
-| `feature/xxx` | One branch per feature |
-
-**Workflow:** `develop` → `feature/xxx` → PR back to `develop` → release to `main`
-
----
-
-## Common commands
-
-```bash
-git pull
-git checkout -b feature/your-feature-name
-git add .
-git commit -m "feat: your message"
-git push origin feature/your-feature-name
-# then open a PR to develop on GitHub
-```
+</body>
+</html>

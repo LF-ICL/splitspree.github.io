@@ -1,47 +1,132 @@
 /**
- * supabase.js
- * Initialises the Supabase client. Every other JS file imports `_sb`.
+ * expenses.js
+ * Expense creation, editing, and deletion for SplitSpree.
+ * All data lives in Supabase.
  *
- * ── SETUP ───────────────────────────────────────────────────────────────────
- * Replace the two placeholder strings below with your real values from:
- *   Supabase Dashboard → Project Settings → API
- *     • Project URL   → SUPABASE_URL
- *     • anon/public   → SUPABASE_ANON_KEY
+ * Depends on: supabase.js, auth.js
+ *
+ * ── Public API ──────────────────────────────────────────────────────────────
+ *   getExpenses(groupId)                          → all expenses for a group
+ *   addExpense(groupId, desc, amount, memberId)   → creates a validated expense
+ *   editExpense(expenseId, updates)               → patches an expense (owner only)
+ *   removeExpense(expenseId)                      → deletes an expense (owner only)
  * ────────────────────────────────────────────────────────────────────────────
  */
 
-const SUPABASE_URL      = 'https://YOUR_PROJECT_ID.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
+/**
+ * Returns all expenses for a group, including the payer's display name.
+ * Ordered by creation time ascending (oldest first).
+ *
+ * @param {string} groupId
+ * @returns {Promise<Array>}
+ */
+async function getExpenses(groupId) {
+  const { data, error } = await _sb
+    .from('expenses')
+    .select(`
+      id, description, amount, created_at, created_by,
+      group_members!paid_by_member_id (id, display_name, is_dummy)
+    `)
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: true });
 
-// The Supabase JS SDK is loaded via CDN in index.html before this file.
-// `supabase` (lowercase) is the global exposed by the CDN bundle.
-const _sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: {
-    // Store the session in a cookie so it survives page reloads and works
-    // across devices when the same email is used to log in.
-    persistSession: true,
-    storageKey: 'splitspree_session',
-    storage: {
-      // Use cookies instead of localStorage for cross-device support.
-      getItem:    key => getCookie(key),
-      setItem:    (key, value) => setCookie(key, value, 30),  // 30-day expiry
-      removeItem: key => deleteCookie(key),
-    },
-  },
-});
-
-// ── Cookie helpers ────────────────────────────────────────────────────────────
-
-function setCookie(name, value, days) {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString();
-  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+  if (error) { console.error('getExpenses:', error); return []; }
+  return data || [];
 }
 
-function getCookie(name) {
-  const match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
-  return match ? decodeURIComponent(match[1]) : null;
+/**
+ * Adds a new expense to a group.
+ * The expense is split equally among all current group members.
+ *
+ * @param {string} groupId
+ * @param {string} desc       - Short description (e.g. "Dinner").
+ * @param {number|string} amount - Total amount paid (must be > 0).
+ * @param {string} memberId   - group_members.id of the member who paid.
+ * @returns {Promise<{ok: boolean, expense?: Object, message?: string}>}
+ */
+async function addExpense(groupId, desc, amount, memberId) {
+  const trimDesc = desc.trim();
+  if (!trimDesc) return { ok: false, message: 'Description cannot be empty.' };
+
+  const parsed = parseFloat(amount);
+  if (isNaN(parsed) || parsed <= 0) return { ok: false, message: 'Amount must be a positive number.' };
+
+  if (!memberId) return { ok: false, message: 'Please select who paid.' };
+
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, message: 'You must be logged in.' };
+
+  const { data, error } = await _sb
+    .from('expenses')
+    .insert({
+      group_id:           groupId,
+      description:        trimDesc,
+      amount:             parsed,
+      paid_by_member_id:  memberId,
+      created_by:         user.id,
+    })
+    .select(`
+      id, description, amount, created_at,
+      group_members!paid_by_member_id (id, display_name, is_dummy)
+    `)
+    .single();
+
+  if (error) return { ok: false, message: 'Failed to add expense: ' + error.message };
+  return { ok: true, expense: data };
 }
 
-function deleteCookie(name) {
-  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+/**
+ * Edits an existing expense. Only the original creator can edit (RLS enforced).
+ * Pass only the fields you want to change: desc, amount, memberId.
+ *
+ * @param {string} expenseId
+ * @param {Object} updates
+ * @param {string}  [updates.desc]
+ * @param {number}  [updates.amount]
+ * @param {string}  [updates.memberId] - new paid_by_member_id
+ * @returns {Promise<{ok: boolean, message: string}>}
+ */
+async function editExpense(expenseId, updates) {
+  const patch = {};
+
+  if (updates.desc !== undefined) {
+    const trimmed = updates.desc.trim();
+    if (!trimmed) return { ok: false, message: 'Description cannot be empty.' };
+    patch.description = trimmed;
+  }
+
+  if (updates.amount !== undefined) {
+    const parsed = parseFloat(updates.amount);
+    if (isNaN(parsed) || parsed <= 0) return { ok: false, message: 'Amount must be a positive number.' };
+    patch.amount = parsed;
+  }
+
+  if (updates.memberId !== undefined) {
+    patch.paid_by_member_id = updates.memberId;
+  }
+
+  if (Object.keys(patch).length === 0) return { ok: false, message: 'No changes provided.' };
+
+  const { error } = await _sb
+    .from('expenses')
+    .update(patch)
+    .eq('id', expenseId);
+
+  if (error) return { ok: false, message: 'Failed to update expense: ' + error.message };
+  return { ok: true, message: 'Expense updated.' };
+}
+
+/**
+ * Deletes an expense. Only the original creator can delete (RLS enforced).
+ * @param {string} expenseId
+ * @returns {Promise<{ok: boolean, message: string}>}
+ */
+async function removeExpense(expenseId) {
+  const { error } = await _sb
+    .from('expenses')
+    .delete()
+    .eq('id', expenseId);
+
+  if (error) return { ok: false, message: 'Failed to delete expense: ' + error.message };
+  return { ok: true, message: 'Expense deleted.' };
 }

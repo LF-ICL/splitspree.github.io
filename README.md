@@ -1,147 +1,135 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SplitSpree</title>
-  <link rel="stylesheet" href="css/main.css" />
-  <link rel="stylesheet" href="css/components.css" />
-  <!-- Supabase JS SDK (UMD build — exposes global `supabase`) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-</head>
-<body>
+/**
+ * balances.js
+ * Pure balance and settlement calculations for SplitSpree.
+ * No DOM access, no Supabase calls — data-in, data-out only.
+ *
+ * The function signatures changed from the localStorage version:
+ * instead of accepting a groupId and fetching internally, these functions
+ * accept the already-fetched members and expenses arrays. This keeps the
+ * logic fully testable and decoupled from the network layer.
+ *
+ * ── Public API ──────────────────────────────────────────────────────────────
+ *   calculateBalances(members, expenses)    → { displayName: netBalance }
+ *   calculateSettlements(balances)          → [{from, to, amount}]
+ *   getTotalSpend(expenses)                 → number
+ *   getPaidTotals(members, expenses)        → { displayName: totalPaid }
+ * ────────────────────────────────────────────────────────────────────────────
+ */
 
-  <!-- ── Loading overlay (shown on first paint while session loads) ── -->
-  <div id="loading-overlay">
-    <div class="loading-spinner"></div>
-    <p>Loading SplitSpree…</p>
-  </div>
+/**
+ * Calculates the net balance for each member.
+ * Positive  = this person is owed money by others.
+ * Negative  = this person owes money to others.
+ * Expenses are split equally among all members.
+ *
+ * @param {Array}  members  - group_members rows: [{ id, display_name, ... }]
+ * @param {Array}  expenses - expense rows:       [{ amount, group_members: { display_name } }]
+ * @returns {Object} { displayName: netBalance }
+ *
+ * @example
+ *   // Alice paid 3000, Bob paid 0, Charlie paid 0, 3 members
+ *   // → { Alice: 2000, Bob: -1000, Charlie: -1000 }
+ */
+function calculateBalances(members, expenses) {
+  if (!members.length) return {};
 
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- VIEW 1: Auth — register / login                           -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div id="view-auth" class="view">
-    <header class="app-header app-header--centered">
-      <h1 class="app-title">SplitSpree</h1>
-      <p class="app-tagline">Splitwise but free so you go on a spree</p>
-    </header>
+  // Initialise every member at zero
+  const balances = {};
+  members.forEach(m => { balances[m.display_name] = 0; });
 
-    <div class="auth-card card">
-      <h2 id="auth-title">Create account</h2>
+  expenses.forEach(expense => {
+    const payerName = expense.group_members?.display_name;
+    if (!payerName || balances[payerName] === undefined) return;
 
-      <!-- Register panel -->
-      <div id="auth-register-panel">
-        <div class="form-stack">
-          <input id="reg-username" type="text"  placeholder="Username (e.g. Alice)" autocomplete="username" />
-          <input id="reg-email"    type="email" placeholder="Email address"         autocomplete="email" />
-          <button id="reg-submit-btn" class="btn btn--primary btn--full">Send verification email</button>
-        </div>
-        <p class="auth-switch">Already registered?
-          <a href="#" id="show-login-link">Sign in instead</a>
-        </p>
-      </div>
+    const share = expense.amount / members.length;
 
-      <!-- Login panel -->
-      <div id="auth-login-panel" class="hidden">
-        <div class="form-stack">
-          <input id="login-email" type="email" placeholder="Email address" autocomplete="email" />
-          <button id="login-submit-btn" class="btn btn--primary btn--full">Send login link</button>
-        </div>
-        <p class="auth-switch">New here?
-          <a href="#" id="show-register-link">Create an account</a>
-        </p>
-      </div>
-    </div>
-  </div>
+    // Payer gets credit for the full amount paid
+    balances[payerName] += expense.amount;
 
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- VIEW 2: Home — group list                                 -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div id="view-home" class="view">
-    <header class="app-header">
-      <h1 class="app-title">SplitSpree</h1>
-      <div class="app-header__user">
-        <span id="home-username" class="username-badge"></span>
-        <button id="logout-btn" class="btn btn--ghost btn--sm">Sign out</button>
-      </div>
-    </header>
+    // Everyone (including the payer) owes their equal share
+    members.forEach(m => {
+      balances[m.display_name] -= share;
+    });
+  });
 
-    <!-- Pending dummy-merge notifications -->
-    <div id="merge-notifications"></div>
+  // Round to 2 decimal places to prevent floating-point drift
+  Object.keys(balances).forEach(name => {
+    balances[name] = Math.round(balances[name] * 100) / 100;
+  });
 
-    <section class="section">
-      <h2>Create a Group</h2>
-      <div class="form-stack form-stack--row">
-        <input id="new-group-name"    type="text" placeholder="Group name (e.g. Tokyo trip)" />
-        <input id="new-group-members" type="text" placeholder="Other members, comma-separated (optional)" />
-        <button id="create-group-btn" class="btn btn--primary">Create</button>
-      </div>
-      <p class="hint">Members you list will be added as guests if they haven't registered yet.</p>
-    </section>
+  return balances;
+}
 
-    <section class="section">
-      <h2>Your Groups</h2>
-      <div id="group-list"></div>
-    </section>
-  </div>
+/**
+ * Calculates the minimal set of payments needed to settle all debts.
+ * Uses a greedy algorithm: largest debtor pays largest creditor first.
+ *
+ * @param {Object} balances - Output of calculateBalances()
+ * @returns {Array<{from: string, to: string, amount: number}>}
+ *
+ * @example
+ *   calculateSettlements({ Alice: 2000, Bob: -1000, Charlie: -1000 })
+ *   // → [{ from: 'Bob', to: 'Alice', amount: 1000 },
+ *   //    { from: 'Charlie', to: 'Alice', amount: 1000 }]
+ */
+function calculateSettlements(balances) {
+  const debtors   = [];
+  const creditors = [];
 
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <!-- VIEW 3: Group detail                                      -->
-  <!-- ══════════════════════════════════════════════════════════ -->
-  <div id="view-group" class="view">
-    <header class="app-header">
-      <button id="back-btn" class="btn btn--ghost">← Back</button>
-      <h1 id="group-title" class="app-title"></h1>
-    </header>
+  Object.entries(balances).forEach(([name, balance]) => {
+    if (balance < -0.005) debtors.push({ name, amount: -balance });
+    if (balance >  0.005) creditors.push({ name, amount: balance });
+  });
 
-    <section class="section">
-      <h2>Members</h2>
-      <div id="member-list"></div>
-      <details class="add-dummy-toggle">
-        <summary>Add a guest member</summary>
-        <div class="form-stack form-stack--row" style="margin-top:0.75rem">
-          <input id="new-dummy-name" type="text" placeholder="Guest name (e.g. Bob)" />
-          <button id="add-dummy-btn" class="btn btn--primary btn--sm">Add guest</button>
-        </div>
-        <p class="hint">Guests can be merged with a registered account later.</p>
-      </details>
-    </section>
+  debtors.sort((a, b) => b.amount - a.amount);
+  creditors.sort((a, b) => b.amount - a.amount);
 
-    <section class="section">
-      <h2>Add Expense</h2>
-      <div class="form-stack form-stack--row">
-        <input id="new-expense-desc"   type="text"   placeholder="Description (e.g. Dinner)" />
-        <input id="new-expense-amount" type="number" placeholder="Amount" min="0" step="any" />
-        <select id="new-expense-paid-by">
-          <option value="">— Who paid? —</option>
-        </select>
-        <button id="add-expense-btn" class="btn btn--primary">Add</button>
-      </div>
-    </section>
+  const settlements = [];
 
-    <section class="section">
-      <h2>Expenses</h2>
-      <div id="expense-list"></div>
-    </section>
+  while (debtors.length > 0 && creditors.length > 0) {
+    const debtor   = debtors[0];
+    const creditor = creditors[0];
+    const payment  = Math.min(debtor.amount, creditor.amount);
 
-    <section class="section">
-      <h2>Balances</h2>
-      <div id="balance-list"></div>
-    </section>
+    settlements.push({
+      from:   debtor.name,
+      to:     creditor.name,
+      amount: Math.round(payment * 100) / 100,
+    });
 
-    <section class="section">
-      <h2>Settle Up</h2>
-      <div id="settlement-list"></div>
-    </section>
-  </div>
+    debtor.amount   -= payment;
+    creditor.amount -= payment;
 
-  <!-- JS — load order matters -->
-  <script src="js/supabase.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/groups.js"></script>
-  <script src="js/expenses.js"></script>
-  <script src="js/balances.js"></script>
-  <script src="js/ui.js"></script>
+    if (debtor.amount   < 0.005) debtors.shift();
+    if (creditor.amount < 0.005) creditors.shift();
+  }
 
-</body>
-</html>
+  return settlements;
+}
+
+/**
+ * Returns the sum of all expense amounts.
+ * @param {Array} expenses
+ * @returns {number}
+ */
+function getTotalSpend(expenses) {
+  return expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+}
+
+/**
+ * Returns how much each member has paid in total (raw paid, not net).
+ * Useful for "who paid most" summaries.
+ *
+ * @param {Array} members
+ * @param {Array} expenses
+ * @returns {Object} { displayName: totalPaid }
+ */
+function getPaidTotals(members, expenses) {
+  const totals = {};
+  members.forEach(m => { totals[m.display_name] = 0; });
+  expenses.forEach(e => {
+    const name = e.group_members?.display_name;
+    if (name && totals[name] !== undefined) totals[name] += Number(e.amount);
+  });
+  return totals;
+}

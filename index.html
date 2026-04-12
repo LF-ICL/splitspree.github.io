@@ -1,135 +1,210 @@
 /**
- * balances.js
- * Pure balance and settlement calculations for SplitSpree.
- * No DOM access, no Supabase calls — data-in, data-out only.
+ * groups.js
+ * Group and group-member management for SplitSpree.
+ * All data lives in Supabase — no localStorage.
  *
- * The function signatures changed from the localStorage version:
- * instead of accepting a groupId and fetching internally, these functions
- * accept the already-fetched members and expenses arrays. This keeps the
- * logic fully testable and decoupled from the network layer.
+ * Depends on: supabase.js, auth.js
  *
  * ── Public API ──────────────────────────────────────────────────────────────
- *   calculateBalances(members, expenses)    → { displayName: netBalance }
- *   calculateSettlements(balances)          → [{from, to, amount}]
- *   getTotalSpend(expenses)                 → number
- *   getPaidTotals(members, expenses)        → { displayName: totalPaid }
+ *   listGroups()                          → all groups the current user is in
+ *   getGroup(groupId)                     → single group with members
+ *   createGroup(name, memberNames)        → creates group + adds current user + dummies
+ *   renameGroup(groupId, newName)         → updates group name
+ *   removeGroup(groupId)                  → deletes group (owner only)
+ *   addDummyMember(groupId, displayName)  → adds an unregistered placeholder member
+ *   removeMember(groupId, memberId)       → removes a member (blocks if has expenses)
  * ────────────────────────────────────────────────────────────────────────────
  */
 
 /**
- * Calculates the net balance for each member.
- * Positive  = this person is owed money by others.
- * Negative  = this person owes money to others.
- * Expenses are split equally among all members.
- *
- * @param {Array}  members  - group_members rows: [{ id, display_name, ... }]
- * @param {Array}  expenses - expense rows:       [{ amount, group_members: { display_name } }]
- * @returns {Object} { displayName: netBalance }
- *
- * @example
- *   // Alice paid 3000, Bob paid 0, Charlie paid 0, 3 members
- *   // → { Alice: 2000, Bob: -1000, Charlie: -1000 }
+ * Returns all groups the current user is a member of,
+ * including the member list for each.
+ * @returns {Promise<Array>}
  */
-function calculateBalances(members, expenses) {
-  if (!members.length) return {};
+async function listGroups() {
+  const user = await getCurrentUser();
+  if (!user) return [];
 
-  // Initialise every member at zero
-  const balances = {};
-  members.forEach(m => { balances[m.display_name] = 0; });
+  const { data: memberships, error: mErr } = await _sb
+    .from('group_members')
+    .select('group_id')
+    .eq('profile_id', user.id);
 
-  expenses.forEach(expense => {
-    const payerName = expense.group_members?.display_name;
-    if (!payerName || balances[payerName] === undefined) return;
+  if (mErr || !memberships.length) return [];
 
-    const share = expense.amount / members.length;
+  const groupIds = memberships.map(m => m.group_id);
 
-    // Payer gets credit for the full amount paid
-    balances[payerName] += expense.amount;
+  const { data: groups, error: gErr } = await _sb
+    .from('groups')
+    .select(`
+      id, name, created_by, created_at,
+      group_members (id, display_name, profile_id, is_dummy)
+    `)
+    .in('id', groupIds)
+    .order('created_at', { ascending: false });
 
-    // Everyone (including the payer) owes their equal share
-    members.forEach(m => {
-      balances[m.display_name] -= share;
-    });
-  });
-
-  // Round to 2 decimal places to prevent floating-point drift
-  Object.keys(balances).forEach(name => {
-    balances[name] = Math.round(balances[name] * 100) / 100;
-  });
-
-  return balances;
+  if (gErr) { console.error('listGroups:', gErr); return []; }
+  return groups || [];
 }
 
 /**
- * Calculates the minimal set of payments needed to settle all debts.
- * Uses a greedy algorithm: largest debtor pays largest creditor first.
- *
- * @param {Object} balances - Output of calculateBalances()
- * @returns {Array<{from: string, to: string, amount: number}>}
- *
- * @example
- *   calculateSettlements({ Alice: 2000, Bob: -1000, Charlie: -1000 })
- *   // → [{ from: 'Bob', to: 'Alice', amount: 1000 },
- *   //    { from: 'Charlie', to: 'Alice', amount: 1000 }]
+ * Returns a single group with its full member list.
+ * @param {string} groupId
+ * @returns {Promise<Object|null>}
  */
-function calculateSettlements(balances) {
-  const debtors   = [];
-  const creditors = [];
+async function getGroup(groupId) {
+  const { data, error } = await _sb
+    .from('groups')
+    .select(`
+      id, name, created_by, created_at,
+      group_members (id, display_name, profile_id, is_dummy)
+    `)
+    .eq('id', groupId)
+    .single();
 
-  Object.entries(balances).forEach(([name, balance]) => {
-    if (balance < -0.005) debtors.push({ name, amount: -balance });
-    if (balance >  0.005) creditors.push({ name, amount: balance });
-  });
+  if (error) { console.error('getGroup:', error); return null; }
+  return data;
+}
 
-  debtors.sort((a, b) => b.amount - a.amount);
-  creditors.sort((a, b) => b.amount - a.amount);
+/**
+ * Creates a new group, adds the current user as the first member,
+ * then adds any additional names as dummy or real members.
+ *
+ * @param {string} name - Group name (e.g. "Tokyo trip").
+ * @param {string[]} extraMemberNames - Other members by display name.
+ *   If a name matches a registered profile's username, they are linked;
+ *   otherwise they become dummy members.
+ * @returns {Promise<{ok: boolean, group?: Object, message?: string}>}
+ */
+async function createGroup(name, extraMemberNames = []) {
+  const trimName = name.trim();
+  if (!trimName) return { ok: false, message: 'Group name cannot be empty.' };
 
-  const settlements = [];
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, message: 'You must be logged in to create a group.' };
 
-  while (debtors.length > 0 && creditors.length > 0) {
-    const debtor   = debtors[0];
-    const creditor = creditors[0];
-    const payment  = Math.min(debtor.amount, creditor.amount);
+  const { data: group, error: gErr } = await _sb
+    .from('groups')
+    .insert({ name: trimName, created_by: user.id })
+    .select()
+    .single();
 
-    settlements.push({
-      from:   debtor.name,
-      to:     creditor.name,
-      amount: Math.round(payment * 100) / 100,
+  if (gErr) return { ok: false, message: 'Failed to create group: ' + gErr.message };
+
+  const membersToInsert = [{
+    group_id:     group.id,
+    profile_id:   user.id,
+    display_name: user.username,
+    is_dummy:     false,
+  }];
+
+  for (const rawName of extraMemberNames) {
+    const trimmed = rawName.trim();
+    if (!trimmed || trimmed.toLowerCase() === user.username.toLowerCase()) continue;
+
+    const { data: match } = await _sb
+      .from('profiles')
+      .select('id, username')
+      .ilike('username', trimmed)
+      .maybeSingle();
+
+    membersToInsert.push({
+      group_id:     group.id,
+      profile_id:   match ? match.id       : null,
+      display_name: match ? match.username : trimmed,
+      is_dummy:     !match,
     });
-
-    debtor.amount   -= payment;
-    creditor.amount -= payment;
-
-    if (debtor.amount   < 0.005) debtors.shift();
-    if (creditor.amount < 0.005) creditors.shift();
   }
 
-  return settlements;
+  const { error: mErr } = await _sb.from('group_members').insert(membersToInsert);
+  if (mErr) return { ok: false, message: 'Group created but member insert failed: ' + mErr.message };
+
+  return { ok: true, group };
 }
 
 /**
- * Returns the sum of all expense amounts.
- * @param {Array} expenses
- * @returns {number}
+ * Renames a group. Only the group creator can rename (enforced by RLS).
+ * @param {string} groupId
+ * @param {string} newName
+ * @returns {Promise<{ok: boolean, message: string}>}
  */
-function getTotalSpend(expenses) {
-  return expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+async function renameGroup(groupId, newName) {
+  const trimmed = newName.trim();
+  if (!trimmed) return { ok: false, message: 'Group name cannot be empty.' };
+
+  const { error } = await _sb
+    .from('groups')
+    .update({ name: trimmed })
+    .eq('id', groupId);
+
+  if (error) return { ok: false, message: 'Failed to rename group: ' + error.message };
+  return { ok: true, message: 'Group renamed.' };
 }
 
 /**
- * Returns how much each member has paid in total (raw paid, not net).
- * Useful for "who paid most" summaries.
+ * Deletes a group and all its members and expenses (via CASCADE).
+ * Only the group creator can delete (enforced by RLS).
+ * @param {string} groupId
+ * @returns {Promise<{ok: boolean, message: string}>}
+ */
+async function removeGroup(groupId) {
+  const { error } = await _sb
+    .from('groups')
+    .delete()
+    .eq('id', groupId);
+
+  if (error) return { ok: false, message: 'Failed to delete group: ' + error.message };
+  return { ok: true, message: 'Group deleted.' };
+}
+
+/**
+ * Adds an unregistered placeholder (dummy) member to a group.
+ * Triggers the auto-merge queue check via the DB trigger if the name
+ * matches any existing registered profile.
  *
- * @param {Array} members
- * @param {Array} expenses
- * @returns {Object} { displayName: totalPaid }
+ * @param {string} groupId
+ * @param {string} displayName
+ * @returns {Promise<{ok: boolean, member?: Object, message?: string}>}
  */
-function getPaidTotals(members, expenses) {
-  const totals = {};
-  members.forEach(m => { totals[m.display_name] = 0; });
-  expenses.forEach(e => {
-    const name = e.group_members?.display_name;
-    if (name && totals[name] !== undefined) totals[name] += Number(e.amount);
-  });
-  return totals;
+async function addDummyMember(groupId, displayName) {
+  const trimmed = displayName.trim();
+  if (!trimmed) return { ok: false, message: 'Member name cannot be empty.' };
+
+  const { data, error } = await _sb
+    .from('group_members')
+    .insert({ group_id: groupId, profile_id: null, display_name: trimmed, is_dummy: true })
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '23505') return { ok: false, message: `"${trimmed}" is already in this group.` };
+    return { ok: false, message: 'Failed to add member: ' + error.message };
+  }
+
+  return { ok: true, member: data };
+}
+
+/**
+ * Removes a member from a group. Blocked if they have expenses.
+ * @param {string} groupId
+ * @param {string} memberId - group_members.id (UUID)
+ * @returns {Promise<{ok: boolean, message: string}>}
+ */
+async function removeMember(groupId, memberId) {
+  const { count, error: countErr } = await _sb
+    .from('expenses')
+    .select('id', { count: 'exact', head: true })
+    .eq('paid_by_member_id', memberId);
+
+  if (countErr) return { ok: false, message: 'Could not verify expenses.' };
+  if (count > 0) return { ok: false, message: 'Cannot remove a member who has expenses recorded.' };
+
+  const { error } = await _sb
+    .from('group_members')
+    .delete()
+    .eq('id', memberId)
+    .eq('group_id', groupId);
+
+  if (error) return { ok: false, message: 'Failed to remove member: ' + error.message };
+  return { ok: true, message: 'Member removed.' };
 }
