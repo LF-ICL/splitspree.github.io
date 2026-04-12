@@ -1,135 +1,188 @@
-/**
- * balances.js
- * Pure balance and settlement calculations for SplitSpree.
- * No DOM access, no Supabase calls — data-in, data-out only.
- *
- * The function signatures changed from the localStorage version:
- * instead of accepting a groupId and fetching internally, these functions
- * accept the already-fetched members and expenses arrays. This keeps the
- * logic fully testable and decoupled from the network layer.
- *
- * ── Public API ──────────────────────────────────────────────────────────────
- *   calculateBalances(members, expenses)    → { displayName: netBalance }
- *   calculateSettlements(balances)          → [{from, to, amount}]
- *   getTotalSpend(expenses)                 → number
- *   getPaidTotals(members, expenses)        → { displayName: totalPaid }
- * ────────────────────────────────────────────────────────────────────────────
- */
+# SplitSpree
 
-/**
- * Calculates the net balance for each member.
- * Positive  = this person is owed money by others.
- * Negative  = this person owes money to others.
- * Expenses are split equally among all members.
- *
- * @param {Array}  members  - group_members rows: [{ id, display_name, ... }]
- * @param {Array}  expenses - expense rows:       [{ amount, group_members: { display_name } }]
- * @returns {Object} { displayName: netBalance }
- *
- * @example
- *   // Alice paid 3000, Bob paid 0, Charlie paid 0, 3 members
- *   // → { Alice: 2000, Bob: -1000, Charlie: -1000 }
- */
-function calculateBalances(members, expenses) {
-  if (!members.length) return {};
+> Splitwise but free so you go on a spree
 
-  // Initialise every member at zero
-  const balances = {};
-  members.forEach(m => { balances[m.display_name] = 0; });
+A lightweight expense splitter with user auth and server-side storage.
+Pure HTML, CSS, and vanilla JS frontend. Supabase (PostgreSQL + Auth) backend.
 
-  expenses.forEach(expense => {
-    const payerName = expense.group_members?.display_name;
-    if (!payerName || balances[payerName] === undefined) return;
+**Live:** https://splitspree.github.io  
+**Repo:** https://github.com/LF-ICL/splitspree.github.io
 
-    const share = expense.amount / members.length;
+---
 
-    // Payer gets credit for the full amount paid
-    balances[payerName] += expense.amount;
+## First-time setup
 
-    // Everyone (including the payer) owes their equal share
-    members.forEach(m => {
-      balances[m.display_name] -= share;
-    });
-  });
+### 1. Create a Supabase project
 
-  // Round to 2 decimal places to prevent floating-point drift
-  Object.keys(balances).forEach(name => {
-    balances[name] = Math.round(balances[name] * 100) / 100;
-  });
+1. Go to https://supabase.com and sign up (free)
+2. Click **New project**
+3. Choose a name (e.g. `splitspree`), set a database password, pick a region close to you
+4. Wait ~2 minutes for the project to spin up
 
-  return balances;
-}
+### 2. Run the database schema
 
-/**
- * Calculates the minimal set of payments needed to settle all debts.
- * Uses a greedy algorithm: largest debtor pays largest creditor first.
- *
- * @param {Object} balances - Output of calculateBalances()
- * @returns {Array<{from: string, to: string, amount: number}>}
- *
- * @example
- *   calculateSettlements({ Alice: 2000, Bob: -1000, Charlie: -1000 })
- *   // → [{ from: 'Bob', to: 'Alice', amount: 1000 },
- *   //    { from: 'Charlie', to: 'Alice', amount: 1000 }]
- */
-function calculateSettlements(balances) {
-  const debtors   = [];
-  const creditors = [];
+1. In your Supabase dashboard, go to **SQL Editor → New query**
+2. Paste the entire contents of `supabase_schema.sql`
+3. Click **Run** — you should see "Success. No rows returned"
 
-  Object.entries(balances).forEach(([name, balance]) => {
-    if (balance < -0.005) debtors.push({ name, amount: -balance });
-    if (balance >  0.005) creditors.push({ name, amount: balance });
-  });
+### 3. Configure email redirect URL
 
-  debtors.sort((a, b) => b.amount - a.amount);
-  creditors.sort((a, b) => b.amount - a.amount);
+1. Go to **Authentication → URL Configuration**
+2. Set **Site URL** to `https://splitspree.github.io`
+3. Under **Redirect URLs**, add `https://splitspree.github.io`
+4. For local dev, also add `http://localhost:5500` (or whatever port you use)
 
-  const settlements = [];
+### 4. Add your Supabase credentials
 
-  while (debtors.length > 0 && creditors.length > 0) {
-    const debtor   = debtors[0];
-    const creditor = creditors[0];
-    const payment  = Math.min(debtor.amount, creditor.amount);
+1. Go to **Project Settings → API**
+2. Copy your **Project URL** and **anon/public** key
+3. Open `js/supabase.js` and replace:
+   ```js
+   const SUPABASE_URL      = 'https://YOUR_PROJECT_ID.supabase.co';
+   const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
+   ```
 
-    settlements.push({
-      from:   debtor.name,
-      to:     creditor.name,
-      amount: Math.round(payment * 100) / 100,
-    });
+### 5. Deploy
 
-    debtor.amount   -= payment;
-    creditor.amount -= payment;
+```bash
+git add .
+git commit -m "feat: add Supabase auth and server-side storage"
+git push origin main
+```
 
-    if (debtor.amount   < 0.005) debtors.shift();
-    if (creditor.amount < 0.005) creditors.shift();
-  }
+---
 
-  return settlements;
-}
+## File structure
 
-/**
- * Returns the sum of all expense amounts.
- * @param {Array} expenses
- * @returns {number}
- */
-function getTotalSpend(expenses) {
-  return expenses.reduce((sum, e) => sum + Number(e.amount), 0);
-}
+```
+splitspree.github.io/
+├── index.html              ← markup: auth view, home view, group detail view
+├── supabase_schema.sql     ← run once in Supabase SQL editor to set up DB
+├── css/
+│   ├── main.css            ← global layout, auth, loading overlay
+│   └── components.css      ← buttons, cards, chips, merge banner
+├── js/
+│   ├── supabase.js         ← Supabase client init (set your keys here)
+│   ├── auth.js             ← register, login, logout, session, merge queue
+│   ├── groups.js           ← group + member CRUD via Supabase
+│   ├── expenses.js         ← expense CRUD via Supabase
+│   ├── balances.js         ← pure math: balances + settlements (no network)
+│   └── ui.js               ← all DOM rendering and event wiring
+├── pages/                  ← future additional pages
+├── assets/icons/
+└── README.md
+```
 
-/**
- * Returns how much each member has paid in total (raw paid, not net).
- * Useful for "who paid most" summaries.
- *
- * @param {Array} members
- * @param {Array} expenses
- * @returns {Object} { displayName: totalPaid }
- */
-function getPaidTotals(members, expenses) {
-  const totals = {};
-  members.forEach(m => { totals[m.display_name] = 0; });
-  expenses.forEach(e => {
-    const name = e.group_members?.display_name;
-    if (name && totals[name] !== undefined) totals[name] += Number(e.amount);
-  });
-  return totals;
-}
+---
+
+## JS load order (critical)
+
+```html
+<script src="js/supabase.js"></script>   <!-- Supabase client — no deps -->
+<script src="js/auth.js"></script>       <!-- needs supabase.js -->
+<script src="js/groups.js"></script>     <!-- needs supabase.js, auth.js -->
+<script src="js/expenses.js"></script>   <!-- needs supabase.js, auth.js -->
+<script src="js/balances.js"></script>   <!-- pure math, no deps -->
+<script src="js/ui.js"></script>         <!-- needs everything above -->
+```
+
+---
+
+## Database schema
+
+| Table | Purpose |
+|-------|---------|
+| `profiles` | One row per registered user (linked to Supabase auth) |
+| `groups` | Expense groups |
+| `group_members` | Members of each group — real or dummy |
+| `expenses` | Individual expense records |
+| `dummy_merge_queue` | Pending merge proposals when a dummy name registers |
+
+Row-Level Security is enabled on all tables — users can only see and edit data for groups they belong to.
+
+---
+
+## Auth flow
+
+**Register:** User enters username + email → receives verification email → clicks link → auto-logged in, profile created.
+
+**Login (new device):** User enters email only → receives magic-link → clicks link → auto-logged in. No password needed.
+
+**Session:** Stored in a cookie (30-day expiry). Works across page reloads and devices.
+
+---
+
+## Dummy member merging
+
+When a registered user creates a group and adds members by name, any name that doesn't match a registered account becomes a **guest (dummy) member**.
+
+When a new user registers with a username matching an existing dummy name, the group creator sees a **merge notification** on their home screen. They can accept (linking the real account to that member's history) or dismiss (keeping them separate).
+
+---
+
+## Module API reference
+
+### `auth.js`
+| Function | Description |
+|----------|-------------|
+| `registerUser(username, email)` | Sends verification email |
+| `loginUser(email)` | Sends magic-link login email |
+| `logoutUser()` | Signs out |
+| `getCurrentUser()` | Returns `{id, username, email}` or null |
+| `getSession()` | Returns raw Supabase session |
+| `handleAuthRedirect()` | Call on page load to process email link |
+| `getPendingMerges()` | Returns unresolved merge proposals |
+| `acceptMerge(mergeId)` | Links dummy to real profile |
+| `dismissMerge(mergeId)` | Marks proposal dismissed |
+
+### `groups.js`
+| Function | Description |
+|----------|-------------|
+| `listGroups()` | All groups the current user is in |
+| `getGroup(id)` | Single group with members |
+| `createGroup(name, memberNames[])` | Creates group, adds current user + others |
+| `renameGroup(id, name)` | Renames (owner only) |
+| `removeGroup(id)` | Deletes group + all data (owner only) |
+| `addDummyMember(groupId, name)` | Adds a guest member |
+| `removeMember(groupId, memberId)` | Removes member (blocked if has expenses) |
+
+### `expenses.js`
+| Function | Description |
+|----------|-------------|
+| `getExpenses(groupId)` | All expenses for a group |
+| `addExpense(groupId, desc, amount, memberId)` | Creates validated expense |
+| `editExpense(expenseId, updates)` | Patches description/amount/payer |
+| `removeExpense(expenseId)` | Deletes expense (creator only) |
+
+### `balances.js`
+| Function | Description |
+|----------|-------------|
+| `calculateBalances(members, expenses)` | Returns `{name: netBalance}` |
+| `calculateSettlements(balances)` | Returns `[{from, to, amount}]` |
+| `getTotalSpend(expenses)` | Sum of all amounts |
+| `getPaidTotals(members, expenses)` | Returns `{name: totalPaid}` |
+
+---
+
+## Branch strategy
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Live on GitHub Pages — never push directly |
+| `develop` | Integration branch |
+| `feature/xxx` | One branch per feature |
+
+**Workflow:** `develop` → `feature/xxx` → PR back to `develop` → release to `main`
+
+---
+
+## Common commands
+
+```bash
+git pull
+git checkout -b feature/your-feature-name
+git add .
+git commit -m "feat: your message"
+git push origin feature/your-feature-name
+# then open a PR to develop on GitHub
+```

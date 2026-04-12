@@ -1,113 +1,132 @@
 /**
  * expenses.js
  * Expense creation, editing, and deletion for SplitSpree.
- * Depends on: storage.js, groups.js (must be loaded first)
+ * All data lives in Supabase.
+ *
+ * Depends on: supabase.js, auth.js
+ *
+ * ── Public API ──────────────────────────────────────────────────────────────
+ *   getExpenses(groupId)                          → all expenses for a group
+ *   addExpense(groupId, desc, amount, memberId)   → creates a validated expense
+ *   editExpense(expenseId, updates)               → patches an expense (owner only)
+ *   removeExpense(expenseId)                      → deletes an expense (owner only)
+ * ────────────────────────────────────────────────────────────────────────────
  */
 
 /**
- * Adds a new expense to a group and saves it.
- * The expense is split equally among ALL members of the group.
+ * Returns all expenses for a group, including the payer's display name.
+ * Ordered by creation time ascending (oldest first).
+ *
  * @param {string} groupId
- * @param {string} desc - Short description (e.g. "Dinner").
- * @param {number} amount - Total amount paid (must be > 0).
- * @param {string} paidBy - Name of the member who paid (must be in group).
- * @returns {Object} The newly created expense object.
- * @throws {Error} On validation failure.
+ * @returns {Promise<Array>}
  */
-function addExpense(groupId, desc, amount, paidBy) {
-  const group = getGroupById(groupId);
-  if (!group) throw new Error(`Group not found: ${groupId}`);
+async function getExpenses(groupId) {
+  const { data, error } = await _sb
+    .from('expenses')
+    .select(`
+      id, description, amount, created_at, created_by,
+      group_members!paid_by_member_id (id, display_name, is_dummy)
+    `)
+    .eq('group_id', groupId)
+    .order('created_at', { ascending: true });
 
-  const trimmedDesc = desc.trim();
-  if (!trimmedDesc) throw new Error('Expense description cannot be empty.');
-
-  const parsedAmount = parseFloat(amount);
-  if (isNaN(parsedAmount) || parsedAmount <= 0) {
-    throw new Error('Amount must be a positive number.');
-  }
-
-  if (!group.members.includes(paidBy)) {
-    throw new Error(`"${paidBy}" is not a member of this group.`);
-  }
-
-  const expense = {
-    id: generateId(),
-    desc: trimmedDesc,
-    amount: parsedAmount,
-    paidBy,
-  };
-
-  group.expenses.push(expense);
-  saveGroup(group);
-  return expense;
+  if (error) { console.error('getExpenses:', error); return []; }
+  return data || [];
 }
 
 /**
- * Edits an existing expense in a group.
- * Only the fields you pass will be updated (desc, amount, paidBy).
+ * Adds a new expense to a group.
+ * The expense is split equally among all current group members.
+ *
  * @param {string} groupId
- * @param {string} expenseId
- * @param {Object} updates - Object with any of { desc, amount, paidBy }
- * @returns {Object} The updated expense object.
- * @throws {Error} If group or expense not found, or validation fails.
+ * @param {string} desc       - Short description (e.g. "Dinner").
+ * @param {number|string} amount - Total amount paid (must be > 0).
+ * @param {string} memberId   - group_members.id of the member who paid.
+ * @returns {Promise<{ok: boolean, expense?: Object, message?: string}>}
  */
-function editExpense(groupId, expenseId, updates) {
-  const group = getGroupById(groupId);
-  if (!group) throw new Error(`Group not found: ${groupId}`);
+async function addExpense(groupId, desc, amount, memberId) {
+  const trimDesc = desc.trim();
+  if (!trimDesc) return { ok: false, message: 'Description cannot be empty.' };
 
-  const expense = group.expenses.find(e => e.id === expenseId);
-  if (!expense) throw new Error(`Expense not found: ${expenseId}`);
+  const parsed = parseFloat(amount);
+  if (isNaN(parsed) || parsed <= 0) return { ok: false, message: 'Amount must be a positive number.' };
+
+  if (!memberId) return { ok: false, message: 'Please select who paid.' };
+
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, message: 'You must be logged in.' };
+
+  const { data, error } = await _sb
+    .from('expenses')
+    .insert({
+      group_id:           groupId,
+      description:        trimDesc,
+      amount:             parsed,
+      paid_by_member_id:  memberId,
+      created_by:         user.id,
+    })
+    .select(`
+      id, description, amount, created_at,
+      group_members!paid_by_member_id (id, display_name, is_dummy)
+    `)
+    .single();
+
+  if (error) return { ok: false, message: 'Failed to add expense: ' + error.message };
+  return { ok: true, expense: data };
+}
+
+/**
+ * Edits an existing expense. Only the original creator can edit (RLS enforced).
+ * Pass only the fields you want to change: desc, amount, memberId.
+ *
+ * @param {string} expenseId
+ * @param {Object} updates
+ * @param {string}  [updates.desc]
+ * @param {number}  [updates.amount]
+ * @param {string}  [updates.memberId] - new paid_by_member_id
+ * @returns {Promise<{ok: boolean, message: string}>}
+ */
+async function editExpense(expenseId, updates) {
+  const patch = {};
 
   if (updates.desc !== undefined) {
     const trimmed = updates.desc.trim();
-    if (!trimmed) throw new Error('Expense description cannot be empty.');
-    expense.desc = trimmed;
+    if (!trimmed) return { ok: false, message: 'Description cannot be empty.' };
+    patch.description = trimmed;
   }
 
   if (updates.amount !== undefined) {
     const parsed = parseFloat(updates.amount);
-    if (isNaN(parsed) || parsed <= 0) throw new Error('Amount must be a positive number.');
-    expense.amount = parsed;
+    if (isNaN(parsed) || parsed <= 0) return { ok: false, message: 'Amount must be a positive number.' };
+    patch.amount = parsed;
   }
 
-  if (updates.paidBy !== undefined) {
-    if (!group.members.includes(updates.paidBy)) {
-      throw new Error(`"${updates.paidBy}" is not a member of this group.`);
-    }
-    expense.paidBy = updates.paidBy;
+  if (updates.memberId !== undefined) {
+    patch.paid_by_member_id = updates.memberId;
   }
 
-  saveGroup(group);
-  return expense;
+  if (Object.keys(patch).length === 0) return { ok: false, message: 'No changes provided.' };
+
+  const { error } = await _sb
+    .from('expenses')
+    .update(patch)
+    .eq('id', expenseId);
+
+  if (error) return { ok: false, message: 'Failed to update expense: ' + error.message };
+  return { ok: true, message: 'Expense updated.' };
 }
 
 /**
- * Deletes an expense from a group.
- * @param {string} groupId
+ * Deletes an expense. Only the original creator can delete (RLS enforced).
  * @param {string} expenseId
- * @throws {Error} If group or expense not found.
+ * @returns {Promise<{ok: boolean, message: string}>}
  */
-function removeExpense(groupId, expenseId) {
-  const group = getGroupById(groupId);
-  if (!group) throw new Error(`Group not found: ${groupId}`);
+async function removeExpense(expenseId) {
+  const { error } = await _sb
+    .from('expenses')
+    .delete()
+    .eq('id', expenseId);
 
-  const before = group.expenses.length;
-  group.expenses = group.expenses.filter(e => e.id !== expenseId);
-
-  if (group.expenses.length === before) {
-    throw new Error(`Expense not found: ${expenseId}`);
-  }
-
-  saveGroup(group);
-}
-
-/**
- * Returns all expenses for a group.
- * @param {string} groupId
- * @returns {Array}
- */
-function getExpenses(groupId) {
-  const group = getGroupById(groupId);
-  if (!group) return [];
-  return group.expenses;
+  if (error) return { ok: false, message: 'Failed to delete expense: ' + error.message };
+  return { ok: true, message: 'Expense deleted.' };
 }

@@ -1,18 +1,23 @@
 /* main.css — global layout & typography for SplitSpree */
 
 :root {
-  --color-bg:       #f5f5f0;
-  --color-surface:  #ffffff;
-  --color-primary:  #2e7d32;
-  --color-danger:   #c62828;
-  --color-text:     #1a1a1a;
-  --color-muted:    #666;
-  --color-border:   #e0e0e0;
-  --color-positive: #2e7d32;
-  --color-negative: #c62828;
+  --color-bg:        #f4f4ef;
+  --color-surface:   #ffffff;
+  --color-primary:   #2e7d32;
+  --color-primary-d: #1b5e20;
+  --color-danger:    #c62828;
+  --color-danger-d:  #8e0000;
+  --color-text:      #1a1a1a;
+  --color-muted:     #666;
+  --color-border:    #e0e0e0;
+  --color-positive:  #2e7d32;
+  --color-negative:  #c62828;
+  --color-warning:   #f57c00;
 
-  --radius: 8px;
-  --shadow: 0 2px 8px rgba(0,0,0,0.08);
+  --radius:     8px;
+  --radius-lg:  14px;
+  --shadow:     0 2px 8px rgba(0,0,0,0.08);
+  --shadow-lg:  0 6px 24px rgba(0,0,0,0.12);
   --transition: 0.2s ease;
 }
 
@@ -26,12 +31,45 @@ body {
   min-height: 100vh;
 }
 
-/* ── View switching ─────────────────────────────────────── */
+/* ── Loading overlay ─────────────────────────────────────── */
+
+#loading-overlay {
+  position: fixed; inset: 0;
+  background: var(--color-bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 1rem;
+  z-index: 999;
+  transition: opacity 0.3s ease;
+}
+#loading-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.loading-spinner {
+  width: 36px; height: 36px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── View switching ──────────────────────────────────────── */
 
 .view { display: none; }
-.view.active { display: block; max-width: 700px; margin: 0 auto; padding: 1.5rem; }
+.view.active {
+  display: block;
+  max-width: 700px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-/* ── App header ─────────────────────────────────────────── */
+.hidden { display: none !important; }
+
+/* ── App header ──────────────────────────────────────────── */
 
 .app-header {
   margin-bottom: 2rem;
@@ -40,45 +78,61 @@ body {
   gap: 1rem;
   flex-wrap: wrap;
 }
-
+.app-header--centered {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.app-header__user {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
 .app-title {
   font-size: 1.75rem;
   font-weight: 700;
   color: var(--color-primary);
 }
-
 .app-tagline {
   color: var(--color-muted);
   font-size: 0.9rem;
 }
+.username-badge {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--color-muted);
+}
 
 /* ── Sections ────────────────────────────────────────────── */
 
-.section {
-  margin-bottom: 2rem;
-}
-
+.section { margin-bottom: 2rem; }
 .section h2 {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 0.8rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   color: var(--color-muted);
   margin-bottom: 0.75rem;
 }
 
-/* ── Form rows ───────────────────────────────────────────── */
+/* ── Form layouts ────────────────────────────────────────── */
 
-.form-row {
+.form-stack {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 0.5rem;
+}
+.form-stack--row {
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
 }
 
-.form-row input {
+.form-stack input,
+.form-stack select {
   flex: 1;
-  min-width: 180px;
+  min-width: 160px;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -86,21 +140,72 @@ body {
   background: var(--color-surface);
   transition: border-color var(--transition);
 }
-
-.form-row input:focus {
+.form-stack input:focus,
+.form-stack select:focus {
   outline: none;
   border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(46,125,50,0.1);
 }
 
-/* ── Empty states ────────────────────────────────────────── */
+.hint {
+  font-size: 0.8rem;
+  color: var(--color-muted);
+  margin-top: 0.4rem;
+}
+
+/* ── Auth card ───────────────────────────────────────────── */
+
+.auth-card {
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+.auth-card h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1.25rem;
+  font-weight: 700;
+}
+.auth-switch {
+  font-size: 0.875rem;
+  color: var(--color-muted);
+  margin-top: 1rem;
+  text-align: center;
+}
+.auth-switch a {
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 600;
+}
+.auth-switch a:hover { text-decoration: underline; }
+
+/* ── Add-dummy collapsible ────────────────────────────────── */
+
+.add-dummy-toggle {
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--color-muted);
+}
+.add-dummy-toggle summary {
+  cursor: pointer;
+  color: var(--color-primary);
+  font-weight: 600;
+  user-select: none;
+}
+
+/* ── Empty states & misc ─────────────────────────────────── */
 
 .empty-state {
   color: var(--color-muted);
   font-style: italic;
-  padding: 1rem 0;
+  padding: 0.75rem 0;
+}
+.loading-text {
+  color: var(--color-muted);
+  font-size: 0.9rem;
+  padding: 0.5rem 0;
 }
 
-/* ── Status / toast message ──────────────────────────────── */
+/* ── Toast / status message ──────────────────────────────── */
 
 .status-msg {
   position: fixed;
@@ -109,19 +214,16 @@ body {
   transform: translateX(-50%) translateY(80px);
   background: #333;
   color: #fff;
-  padding: 0.6rem 1.25rem;
+  padding: 0.6rem 1.4rem;
   border-radius: 999px;
   font-size: 0.9rem;
   opacity: 0;
   transition: transform 0.3s ease, opacity 0.3s ease;
   z-index: 1000;
   pointer-events: none;
+  max-width: 90vw;
+  text-align: center;
 }
-
-.status-msg--visible {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-.status-msg--success { background: var(--color-positive); }
-.status-msg--error   { background: var(--color-danger); }
+.status-msg--visible    { opacity: 1; transform: translateX(-50%) translateY(0); }
+.status-msg--success    { background: var(--color-positive); }
+.status-msg--error      { background: var(--color-danger); }

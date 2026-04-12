@@ -1,69 +1,79 @@
 /**
  * balances.js
- * Pure balance calculation logic for SplitSpree.
- * No DOM access — these are all plain data-in, data-out functions.
- * Depends on: storage.js, groups.js (must be loaded first)
+ * Pure balance and settlement calculations for SplitSpree.
+ * No DOM access, no Supabase calls — data-in, data-out only.
+ *
+ * The function signatures changed from the localStorage version:
+ * instead of accepting a groupId and fetching internally, these functions
+ * accept the already-fetched members and expenses arrays. This keeps the
+ * logic fully testable and decoupled from the network layer.
+ *
+ * ── Public API ──────────────────────────────────────────────────────────────
+ *   calculateBalances(members, expenses)    → { displayName: netBalance }
+ *   calculateSettlements(balances)          → [{from, to, amount}]
+ *   getTotalSpend(expenses)                 → number
+ *   getPaidTotals(members, expenses)        → { displayName: totalPaid }
+ * ────────────────────────────────────────────────────────────────────────────
  */
 
 /**
- * Calculates the net balance for each member in a group.
- * Positive balance = you are owed money.
- * Negative balance = you owe money.
+ * Calculates the net balance for each member.
+ * Positive  = this person is owed money by others.
+ * Negative  = this person owes money to others.
  * Expenses are split equally among all members.
  *
- * @param {string} groupId
- * @returns {Object} Map of { memberName: netBalance (number) }
+ * @param {Array}  members  - group_members rows: [{ id, display_name, ... }]
+ * @param {Array}  expenses - expense rows:       [{ amount, group_members: { display_name } }]
+ * @returns {Object} { displayName: netBalance }
+ *
  * @example
- *   // Alice paid 3000, Bob paid 0, 3 members split equally (1000 each)
+ *   // Alice paid 3000, Bob paid 0, Charlie paid 0, 3 members
  *   // → { Alice: 2000, Bob: -1000, Charlie: -1000 }
  */
-function calculateBalances(groupId) {
-  const group = getGroupById(groupId);
-  if (!group) return {};
-
-  const memberCount = group.members.length;
-  if (memberCount === 0) return {};
+function calculateBalances(members, expenses) {
+  if (!members.length) return {};
 
   // Initialise every member at zero
   const balances = {};
-  group.members.forEach(m => { balances[m] = 0; });
+  members.forEach(m => { balances[m.display_name] = 0; });
 
-  group.expenses.forEach(expense => {
-    const share = expense.amount / memberCount;
+  expenses.forEach(expense => {
+    const payerName = expense.group_members?.display_name;
+    if (!payerName || balances[payerName] === undefined) return;
 
-    // Payer gets credit for the full amount
-    balances[expense.paidBy] += expense.amount;
+    const share = expense.amount / members.length;
+
+    // Payer gets credit for the full amount paid
+    balances[payerName] += expense.amount;
 
     // Everyone (including the payer) owes their equal share
-    group.members.forEach(member => {
-      balances[member] -= share;
+    members.forEach(m => {
+      balances[m.display_name] -= share;
     });
   });
 
-  // Round to 2 decimal places to avoid floating point drift
-  group.members.forEach(m => {
-    balances[m] = Math.round(balances[m] * 100) / 100;
+  // Round to 2 decimal places to prevent floating-point drift
+  Object.keys(balances).forEach(name => {
+    balances[name] = Math.round(balances[name] * 100) / 100;
   });
 
   return balances;
 }
 
 /**
- * Calculates the minimum set of transactions needed to settle all debts.
+ * Calculates the minimal set of payments needed to settle all debts.
  * Uses a greedy algorithm: largest debtor pays largest creditor first.
  *
- * @param {string} groupId
+ * @param {Object} balances - Output of calculateBalances()
  * @returns {Array<{from: string, to: string, amount: number}>}
- *   Ordered list of settlement payments.
+ *
  * @example
- *   [{ from: 'Bob', to: 'Alice', amount: 1000 }, ...]
+ *   calculateSettlements({ Alice: 2000, Bob: -1000, Charlie: -1000 })
+ *   // → [{ from: 'Bob', to: 'Alice', amount: 1000 },
+ *   //    { from: 'Charlie', to: 'Alice', amount: 1000 }]
  */
-function calculateSettlements(groupId) {
-  const balances = calculateBalances(groupId);
-  if (Object.keys(balances).length === 0) return [];
-
-  // Split into debtors (negative) and creditors (positive)
-  const debtors  = [];
+function calculateSettlements(balances) {
+  const debtors   = [];
   const creditors = [];
 
   Object.entries(balances).forEach(([name, balance]) => {
@@ -71,7 +81,6 @@ function calculateSettlements(groupId) {
     if (balance >  0.005) creditors.push({ name, amount: balance });
   });
 
-  // Sort descending so we always match the biggest mover first
   debtors.sort((a, b) => b.amount - a.amount);
   creditors.sort((a, b) => b.amount - a.amount);
 
@@ -99,29 +108,28 @@ function calculateSettlements(groupId) {
 }
 
 /**
- * Returns the total amount spent in a group across all expenses.
- * @param {string} groupId
+ * Returns the sum of all expense amounts.
+ * @param {Array} expenses
  * @returns {number}
  */
-function getTotalSpend(groupId) {
-  const group = getGroupById(groupId);
-  if (!group) return 0;
-  return group.expenses.reduce((sum, e) => sum + e.amount, 0);
+function getTotalSpend(expenses) {
+  return expenses.reduce((sum, e) => sum + Number(e.amount), 0);
 }
 
 /**
- * Returns how much each member has paid in total (not net — just raw paid).
- * Useful for showing a "who paid most" summary.
- * @param {string} groupId
- * @returns {Object} Map of { memberName: totalPaid }
+ * Returns how much each member has paid in total (raw paid, not net).
+ * Useful for "who paid most" summaries.
+ *
+ * @param {Array} members
+ * @param {Array} expenses
+ * @returns {Object} { displayName: totalPaid }
  */
-function getPaidTotals(groupId) {
-  const group = getGroupById(groupId);
-  if (!group) return {};
-
+function getPaidTotals(members, expenses) {
   const totals = {};
-  group.members.forEach(m => { totals[m] = 0; });
-  group.expenses.forEach(e => { totals[e.paidBy] += e.amount; });
-
+  members.forEach(m => { totals[m.display_name] = 0; });
+  expenses.forEach(e => {
+    const name = e.group_members?.display_name;
+    if (name && totals[name] !== undefined) totals[name] += Number(e.amount);
+  });
   return totals;
 }
