@@ -1,148 +1,147 @@
-# SplitSpree
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SplitSpree</title>
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <!-- Supabase JS SDK (UMD build — exposes global `supabase`) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+</head>
+<body>
 
-> Splitwise but free so you go on a spree
+  <!-- ── Loading overlay (shown on first paint while session loads) ── -->
+  <div id="loading-overlay">
+    <div class="loading-spinner"></div>
+    <p>Loading SplitSpree…</p>
+  </div>
 
-A lightweight expense splitter — pure HTML, CSS, and vanilla JS. No backend, no build step. Data stored in `localStorage`.
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- VIEW 1: Auth — register / login                           -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div id="view-auth" class="view">
+    <header class="app-header app-header--centered">
+      <h1 class="app-title">SplitSpree</h1>
+      <p class="app-tagline">Splitwise but free so you go on a spree</p>
+    </header>
 
-**Live:** https://splitspree.github.io  
-**Repo:** https://github.com/LF-ICL/splitspree.github.io
+    <div class="auth-card card">
+      <h2 id="auth-title">Create account</h2>
 
----
+      <!-- Register panel -->
+      <div id="auth-register-panel">
+        <div class="form-stack">
+          <input id="reg-username" type="text"  placeholder="Username (e.g. Alice)" autocomplete="username" />
+          <input id="reg-email"    type="email" placeholder="Email address"         autocomplete="email" />
+          <button id="reg-submit-btn" class="btn btn--primary btn--full">Send verification email</button>
+        </div>
+        <p class="auth-switch">Already registered?
+          <a href="#" id="show-login-link">Sign in instead</a>
+        </p>
+      </div>
 
-## File structure
+      <!-- Login panel -->
+      <div id="auth-login-panel" class="hidden">
+        <div class="form-stack">
+          <input id="login-email" type="email" placeholder="Email address" autocomplete="email" />
+          <button id="login-submit-btn" class="btn btn--primary btn--full">Send login link</button>
+        </div>
+        <p class="auth-switch">New here?
+          <a href="#" id="show-register-link">Create an account</a>
+        </p>
+      </div>
+    </div>
+  </div>
 
-```
-splitspree.github.io/
-├── index.html            ← markup only, no logic
-├── css/
-│   ├── main.css          ← global layout & typography
-│   └── components.css    ← buttons, cards, modals, forms
-├── js/
-│   ├── storage.js        ← ALL localStorage read/write
-│   ├── groups.js         ← group creation & member management
-│   ├── expenses.js       ← expense creation & validation
-│   ├── balances.js       ← balance calculations (pure logic, no DOM)
-│   └── ui.js             ← DOM rendering & all event wiring
-├── pages/                ← future additional pages
-├── assets/icons/
-└── README.md
-```
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- VIEW 2: Home — group list                                 -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div id="view-home" class="view">
+    <header class="app-header">
+      <h1 class="app-title">SplitSpree</h1>
+      <div class="app-header__user">
+        <span id="home-username" class="username-badge"></span>
+        <button id="logout-btn" class="btn btn--ghost btn--sm">Sign out</button>
+      </div>
+    </header>
 
----
+    <!-- Pending dummy-merge notifications -->
+    <div id="merge-notifications"></div>
 
-## JS load order (critical)
+    <section class="section">
+      <h2>Create a Group</h2>
+      <div class="form-stack form-stack--row">
+        <input id="new-group-name"    type="text" placeholder="Group name (e.g. Tokyo trip)" />
+        <input id="new-group-members" type="text" placeholder="Other members, comma-separated (optional)" />
+        <button id="create-group-btn" class="btn btn--primary">Create</button>
+      </div>
+      <p class="hint">Members you list will be added as guests if they haven't registered yet.</p>
+    </section>
 
-```html
-<script src="js/storage.js"></script>   <!-- no deps -->
-<script src="js/groups.js"></script>    <!-- needs storage -->
-<script src="js/expenses.js"></script>  <!-- needs storage, groups -->
-<script src="js/balances.js"></script>  <!-- needs storage, groups -->
-<script src="js/ui.js"></script>        <!-- needs everything above -->
-```
+    <section class="section">
+      <h2>Your Groups</h2>
+      <div id="group-list"></div>
+    </section>
+  </div>
 
-Each file exposes plain global functions — no modules, no bundler needed.
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- VIEW 3: Group detail                                      -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <div id="view-group" class="view">
+    <header class="app-header">
+      <button id="back-btn" class="btn btn--ghost">← Back</button>
+      <h1 id="group-title" class="app-title"></h1>
+    </header>
 
----
+    <section class="section">
+      <h2>Members</h2>
+      <div id="member-list"></div>
+      <details class="add-dummy-toggle">
+        <summary>Add a guest member</summary>
+        <div class="form-stack form-stack--row" style="margin-top:0.75rem">
+          <input id="new-dummy-name" type="text" placeholder="Guest name (e.g. Bob)" />
+          <button id="add-dummy-btn" class="btn btn--primary btn--sm">Add guest</button>
+        </div>
+        <p class="hint">Guests can be merged with a registered account later.</p>
+      </details>
+    </section>
 
-## Branch strategy
+    <section class="section">
+      <h2>Add Expense</h2>
+      <div class="form-stack form-stack--row">
+        <input id="new-expense-desc"   type="text"   placeholder="Description (e.g. Dinner)" />
+        <input id="new-expense-amount" type="number" placeholder="Amount" min="0" step="any" />
+        <select id="new-expense-paid-by">
+          <option value="">— Who paid? —</option>
+        </select>
+        <button id="add-expense-btn" class="btn btn--primary">Add</button>
+      </div>
+    </section>
 
-| Branch | Purpose |
-|--------|---------|
-| `main` | Live on GitHub Pages — never push directly |
-| `develop` | Integration branch — merge features here |
-| `feature/xxx` | One branch per feature, one person per branch |
+    <section class="section">
+      <h2>Expenses</h2>
+      <div id="expense-list"></div>
+    </section>
 
-**Workflow:** `develop` → `feature/xxx` → PR back to `develop` → release to `main`
+    <section class="section">
+      <h2>Balances</h2>
+      <div id="balance-list"></div>
+    </section>
 
----
+    <section class="section">
+      <h2>Settle Up</h2>
+      <div id="settlement-list"></div>
+    </section>
+  </div>
 
-## Data structures
+  <!-- JS — load order matters -->
+  <script src="js/supabase.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/groups.js"></script>
+  <script src="js/expenses.js"></script>
+  <script src="js/balances.js"></script>
+  <script src="js/ui.js"></script>
 
-### Group
-```json
-{
-  "id": "1234567890abc",
-  "name": "Tokyo trip",
-  "members": ["Alice", "Bob", "Charlie"],
-  "expenses": []
-}
-```
-
-### Expense
-```json
-{
-  "id": "1234567891xyz",
-  "desc": "Dinner",
-  "amount": 5000,
-  "paidBy": "Alice"
-}
-```
-
----
-
-## Module API reference
-
-### `storage.js`
-| Function | Description |
-|----------|-------------|
-| `getAllGroups()` | Returns all groups from localStorage |
-| `saveAllGroups(groups)` | Writes full groups array |
-| `getGroupById(id)` | Returns one group or null |
-| `saveGroup(group)` | Upserts a single group |
-| `deleteGroup(id)` | Removes a group |
-| `clearAllData()` | Wipes everything (dev only) |
-
-### `groups.js`
-| Function | Description |
-|----------|-------------|
-| `createGroup(name, members)` | Creates & saves a new group |
-| `renameGroup(id, newName)` | Renames a group |
-| `addMember(id, name)` | Adds a member to a group |
-| `removeMember(id, name)` | Removes a member (blocks if they have expenses) |
-| `removeGroup(id)` | Deletes a group entirely |
-| `listGroups()` | Returns all groups |
-
-### `expenses.js`
-| Function | Description |
-|----------|-------------|
-| `addExpense(groupId, desc, amount, paidBy)` | Adds a validated expense |
-| `editExpense(groupId, expenseId, updates)` | Patches an existing expense |
-| `removeExpense(groupId, expenseId)` | Deletes an expense |
-| `getExpenses(groupId)` | Returns all expenses for a group |
-
-### `balances.js`
-| Function | Description |
-|----------|-------------|
-| `calculateBalances(groupId)` | Returns `{ member: netBalance }` map |
-| `calculateSettlements(groupId)` | Returns minimal `[{from, to, amount}]` list |
-| `getTotalSpend(groupId)` | Returns sum of all expense amounts |
-| `getPaidTotals(groupId)` | Returns `{ member: totalPaid }` map |
-
-### `ui.js`
-| Function | Description |
-|----------|-------------|
-| `renderGroupList()` | Paints the home screen |
-| `renderGroupDetail(id)` | Paints the group detail view |
-| `showView(viewId)` | Swaps the active view |
-| `navigateHome()` | Goes to home |
-| `navigateToGroup(id)` | Goes to a group detail |
-| `showMessage(msg, type)` | Shows a toast notification |
-
----
-
-## Local development
-
-No build step needed. Just open `index.html` in your browser, or use Live Server in VS Code.
-
----
-
-## Common commands
-
-```bash
-gh repo list LF-ICL                         # list org repos
-git pull                                    # get latest before working
-git checkout -b feature/your-feature-name  # create a feature branch
-git add .
-git commit -m "feat: your message"
-git push origin feature/your-feature-name  # push, then open a PR to develop
-```
+</body>
+</html>
