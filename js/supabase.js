@@ -10,7 +10,7 @@
  * ────────────────────────────────────────────────────────────────────────────
  */
 
-const SUPABASE_URL      = 'https://gvcronmillrzsapnzelt.supabase.co/rest/v1/';
+const SUPABASE_URL      = 'https://gvcronmillrzsapnzelt.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd2Y3Jvbm1pbGxyenNhcG56ZWx0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU5MDU2NDksImV4cCI6MjA5MTQ4MTY0OX0.GRh2Us5iqnupUK5GeF27tQqyKcWyP32mcVlYN-p9tnY';
 
 // The Supabase JS SDK is loaded via CDN in index.html before this file.
